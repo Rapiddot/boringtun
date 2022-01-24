@@ -13,8 +13,10 @@ use crate::device::drop_privileges::drop_privileges;
 use crate::device::{DeviceConfig, DeviceHandle};
 use clap::{value_t, App, Arg};
 use daemonize::Daemonize;
+use std::env;
 use std::fs::File;
 use std::os::unix::net::UnixDatagram;
+use std::process::Command;
 use std::process::exit;
 
 fn check_tun_name(_v: String) -> Result<(), String> {
@@ -178,6 +180,12 @@ fn main() {
             exit(1);
         }
     }
+
+    let post_script = env::var("BORRINGTUN_POSTSCRIPT").unwrap_or("/usr/bin/true".to_string());
+
+    let _ = Command::new(post_script)
+        .arg("config")
+        .spawn();
 
     // Notify parent that tunnel initialization succeeded
     sock1.send(&[1]).unwrap();
