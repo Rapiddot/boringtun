@@ -28,6 +28,7 @@ pub mod tun;
 #[path = "udp_unix.rs"]
 pub mod udp;
 
+use std::env;
 use std::collections::HashMap;
 use std::convert::From;
 use std::io;
@@ -37,6 +38,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
+use std::process::Command;
 
 use crate::crypto::{X25519PublicKey, X25519SecretKey};
 use crate::noise::errors::WireGuardError;
@@ -306,7 +308,8 @@ impl Device {
         // Update an existing peer
         if self.peers.get(&pub_key).is_some() {
             // We already have a peer, we need to merge the existing config into the newly created one
-            panic!("Modifying existing peers is not yet supported. Remove and add again instead.");
+            // panic!("Modifying existing peers is not yet supported. Remove and add again instead.");
+            return;
         }
 
         let next_index = self.next_index();
@@ -545,7 +548,7 @@ impl Device {
                 };
 
                 // Go over each peer and invoke the timer function
-                for peer in peer_map.values() {
+                for (pk, peer) in peer_map {
                     let endpoint_addr = match peer.endpoint().addr {
                         Some(addr) => addr,
                         None => continue,
@@ -555,6 +558,7 @@ impl Device {
                         TunnResult::Done => {}
                         TunnResult::Err(WireGuardError::ConnectionExpired) => {
                             peer.shutdown_endpoint(); // close open udp socket
+                            handle_peer("disconnect".to_string(), base64::encode(pk.as_bytes()));
                         }
                         TunnResult::Err(e) => tracing::error!(message = "Timer error", error = ?e),
                         TunnResult::WriteToNetwork(packet) => {
@@ -616,6 +620,9 @@ impl Device {
                             parse_handshake_anon(&private_key, &public_key, &p)
                                 .ok()
                                 .and_then(|hh| {
+                                    let pub_key = &X25519PublicKey::from(&hh.peer_static_public[..]);
+                                    handle_peer("connect".to_string(), base64::encode(pub_key.as_bytes()));
+
                                     d.peers
                                         .get(&X25519PublicKey::from(&hh.peer_static_public[..]))
                                 })
@@ -812,4 +819,15 @@ impl Device {
         )?;
         Ok(())
     }
+}
+
+fn handle_peer(state: String, pk: String) {
+    let auth_script = env::var("BORRINGTUN_AUTHSCRIPT").unwrap_or("/usr/bin/true".to_string());
+    println!("Handling {} event for PublicKey: {}", state, pk);
+
+    let _ = Command::new(auth_script)
+        .arg(state)
+        .arg("--pubkey")
+        .arg(pk)
+        .spawn();
 }
